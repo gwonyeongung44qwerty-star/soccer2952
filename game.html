@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #1a1a1a;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+        }
+        #top-bar {
+            display: flex;
+            align-items: center;
+            gap: 30px;
+            margin: 15px 0;
+        }
+        #scoreboard {
+            font-size: 30px;
+            font-weight: 800;
+            display: flex;
+            gap: 30px;
+            background: #2a2a2a;
+            padding: 10px 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+        #timer-box {
+            font-size: 28px;
+            font-weight: 800;
+            background: #d35400;
+            padding: 10px 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            color: #fff;
+        }
+        .p1-color { color: #FF4B4B; }
+        .p2-color { color: #1E90FF; }
+        #canvas-container {
+            position: relative;
+        }
+        canvas {
+            border: 5px solid #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 12px 24px rgba(0,0,0,0.6);
+            background-color: #27ae60;
+        }
+        #restart-btn {
+            display: none;
+            position: absolute;
+            top: 65%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 15px 40px;
+            font-size: 24px;
+            font-weight: bold;
+            background-color: #FFD700;
+            color: #1a1a1a;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            box-shadow: 0 6px 12px rgba(0,0,0,0.4);
+            z-index: 10;
+        }
+        #restart-btn:hover {
+            background-color: #FFC700;
+            transform: translate(-50%, -50%) scale(1.05);
+        }
+        #controls-info {
+            margin-top: 15px;
+            font-size: 15px;
+            color: #ddd;
+            display: flex;
+            gap: 30px;
+            background: #252525;
+            padding: 10px 20px;
+            border-radius: 8px;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+</head>
+<body>
+
+<div id="top-bar">
+    <div id="scoreboard">
+        <span class="p1-color">RED (P1): <span id="score1">0</span></span>
+        <span style="color: #888;">VS</span>
+        <span class="p2-color">BLUE (P2): <span id="score2">0</span></span>
+    </div>
+    <div id="timer-box">⏱️ <span id="timer">90</span>s</div>
+</div>
+
+<div id="canvas-container">
+    <canvas id="gameCanvas" width="1000" height="600"></canvas>
+    <button id="restart-btn" onclick="resetGame()">🎮 다시 시작 (RESTART)</button>
+</div>
+
+<div id="controls-info">
+    <div>🔴 <b>P1</b>: W A S D / ⚡ 대시: Space</div>
+    <div>🔵 <b>P2</b>: 방향키 / ⚡ 대시: Enter 또는 Numpad 0</div>
+    <div>🧤 <b>골키퍼 & 👾 방해꾼</b>: 무작위 이동 / 🔒 <b>골 직후 2초간 세레머니 고정</b></div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const restartBtn = document.getElementById('restart-btn');
+
+let score1 = 0;
+let score2 = 0;
+let goalTextTimer = 0;
+let lastScorer = "";
+let gameOver = false;
+let isGoalPaused = false;
+let winnerText = "";
+let animFrame = 0;
+
+let timeLeft = 90;
+let timerInterval = null;
+
+const keys = {};
+
+window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    keys[e.key] = true;
+    if(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Enter'].includes(e.key)) {
+        e.preventDefault();
+    }
+});
+
+window.addEventListener('keyup', e => {
+    keys[e.key.toLowerCase()] = false;
+    keys[e.key] = false;
+});
+
+function startTimer() {
+    clearInterval(timerInterval);
+    timeLeft = 90;
+    document.getElementById('timer').innerText = timeLeft;
+    timerInterval = setInterval(() => {
+        if (!gameOver && !isGoalPaused) {
+            timeLeft--;
+            document.getElementById('timer').innerText = timeLeft;
+            if (timeLeft <= 0) {
+                endGameByTime();
+            }
+        }
+    }, 1000);
+}
+
+function endGameByTime() {
+    gameOver = true;
+    clearInterval(timerInterval);
+    if (score1 > score2) {
+        winnerText = "🔴 P1 (RED) 시간 승리!";
+    } else if (score2 > score1) {
+        winnerText = "🔵 P2 (BLUE) 시간 승리!";
+    } else {
+        winnerText = "🤝 무승부 (DRAW)!";
+    }
+    restartBtn.style.display = 'block';
+}
+
+function playCheerSound() {
+    try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        const bufferSize = audioCtx.sampleRate * 1.5;
+        const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.value = 800;
+
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.setValueAtTime(0.01, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.3, audioCtx.currentTime + 0.2);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.5);
+
+        noise.connect(filter);
+        filter.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        noise.start();
+    } catch(e) {}
+}
+
+const goalWidth = 25;
+const goalHeight = 200;
+const goalY = (canvas.height - goalHeight) / 2;
+
+const ball = {
+    x: canvas.width / 2,
+    y: canvas.height / 2,
+    radius: 14,
+    vx: 0,
+    vy: 0,
+    friction: 0.98,
+    color: '#ffffff'
+};
+
+const p1 = {
+    x: 180,
+    y: canvas.height / 2,
+    radius: 22,
+    baseSpeed: 6.0,
+    speed: 6.0,
+    color: '#FF4B4B',
+    isDashing: false,
+    dashCooldown: 0
+};
+
+const p2 = {
+    x: canvas.width - 180,
+    y: canvas.height / 2,
+    radius: 22,
+    baseSpeed: 6.0,
+    speed: 6.0,
+    color: '#1E90FF',
+    isDashing: false,
+    dashCooldown: 0
+};
+
+const gk1 = { x: goalWidth + 20, y: canvas.height / 2, radius: 18, vy: 3, color: '#E74C3C' };
+const gk2 = { x: canvas.width - goalWidth - 20, y: canvas.height / 2, radius: 18, vy: 3, color: '#2980B9' };
+
+const obstacle = {
+    x: canvas.width / 2,
+    y: canvas.height / 2,
+    radius: 26,
+    vx: 3.5,
+    vy: 2.8,
+    color: '#9B59B6'
+};
+
+const cheerleadersP1 = [{ x: 120, y: 25 }, { x: 200, y: 25 }, { x: 120, y: canvas.height - 25 }, { x: 200, y: canvas.height - 25 }];
+const cheerleadersP2 = [{ x: canvas.width - 120, y: 25 }, { x: canvas.width - 200, y: 25 }, { x: canvas.width - 120, y: canvas.height - 25 }, { x: canvas.width - 200, y: canvas.height - 25 }];
+
+function resetPositions() {
+    ball.x = canvas.width / 2;
+    ball.y = canvas.height / 2;
+    ball.vx = 0;
+    ball.vy = 0;
+
+    p1.x = 180;
+    p1.y = canvas.height / 2;
+
+    p2.x = canvas.width - 180;
+    p2.y = canvas.height / 2;
+
+    obstacle.x = canvas.width / 2;
+    obstacle.y = canvas.height / 2;
+
+    gk1.y = canvas.height / 2;
+    gk2.y = canvas.height / 2;
+}
+
+function resetGame() {
+    score1 = 0;
+    score2 = 0;
+    document.getElementById('score1').innerText = score1;
+    document.getElementById('score2').innerText = score2;
+    gameOver = false;
+    isGoalPaused = false;
+    winnerText = "";
+    restartBtn.style.display = 'none';
+    resetPositions();
+    startTimer();
+}
+
+function triggerGoalEffect(scorer) {
+    lastScorer = scorer;
+    goalTextTimer = 120;
+    isGoalPaused = true;
+
+    resetPositions();
+    playCheerSound();
+
+    const color = scorer.includes("P1") ? '#FF4B4B' : '#1E90FF';
+
+    confetti({ particleCount: 160, spread: 100, origin: { y: 0.5 }, colors: [color, '#ffffff', '#FFD700'] });
+    setTimeout(() => { confetti({ particleCount: 100, spread: 80, origin: { x: 0.2, y: 0.4 }, colors: [color, '#FFD700'] }); }, 250);
+    setTimeout(() => { confetti({ particleCount: 100, spread: 80, origin: { x: 0.8, y: 0.4 }, colors: [color, '#FFD700'] }); }, 500);
+
+    setTimeout(() => {
+        if (!gameOver) isGoalPaused = false;
+    }, 2000);
+
+    if (score1 >= 5 || score2 >= 5) {
+        gameOver = true;
+        clearInterval(timerInterval);
+        winnerText = score1 >= 5 ? "🔴 P1 (RED) 최종 승리!" : "🔵 P2 (BLUE) 최종 승리!";
+        setTimeout(() => { restartBtn.style.display = 'block'; }, 1000);
+    }
+}
+
+function update() {
+    animFrame++;
+    if (gameOver || isGoalPaused) return;
+
+    if (p1.dashCooldown > 0) p1.dashCooldown--;
+    if (p2.dashCooldown > 0) p2.dashCooldown--;
+
+    if (keys[' '] && p1.dashCooldown === 0) {
+        p1.isDashing = true;
+        p1.speed = p1.baseSpeed * 2.2;
+        p1.dashCooldown = 120;
+        setTimeout(() => { p1.speed = p1.baseSpeed; p1.isDashing = false; }, 350);
+    }
+
+    if ((keys['enter'] || keys['0']) && p2.dashCooldown === 0) {
+        p2.isDashing = true;
+        p2.speed = p2.baseSpeed * 2.2;
+        p2.dashCooldown = 120;
+        setTimeout(() => { p2.speed = p2.baseSpeed; p2.isDashing = false; }, 350);
+    }
+
+    let moveX1 = 0, moveY1 = 0;
+    if (keys['w']) moveY1 -= 1;
+    if (keys['s']) moveY1 += 1;
+    if (keys['a']) moveX1 -= 1;
+    if (keys['d']) moveX1 += 1;
+
+    if (moveX1 !== 0 && moveY1 !== 0) { moveX1 *= 0.7071; moveY1 *= 0.7071; }
+    p1.x += moveX1 * p1.speed;
+    p1.y += moveY1 * p1.speed;
+
+    let moveX2 = 0, moveY2 = 0;
+    if (keys['arrowup']) moveY2 -= 1;
+    if (keys['arrowdown']) moveY2 += 1;
+    if (keys['arrowleft']) moveX2 -= 1;
+    if (keys['arrowright']) moveX2 += 1;
+
+    if (moveX2 !== 0 && moveY2 !== 0) { moveX2 *= 0.7071; moveY2 *= 0.7071; }
+    p2.x += moveX2 * p2.speed;
+    p2.y += moveY2 * p2.speed;
+
+    clampPlayer(p1);
+    clampPlayer(p2);
+
+    updateGoalkeeper(gk1, goalY, goalY + goalHeight);
+    updateGoalkeeper(gk2, goalY, goalY + goalHeight);
+
+    obstacle.x += obstacle.vx;
+    obstacle.y += obstacle.vy;
+    if (obstacle.x - obstacle.radius < goalWidth + 10 || obstacle.x + obstacle.radius > canvas.width - goalWidth - 10) obstacle.vx *= -1;
+    if (obstacle.y - obstacle.radius < 10 || obstacle.y + obstacle.radius > canvas.height - 10) obstacle.vy *= -1;
+
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+    ball.vx *= ball.friction;
+    ball.vy *= ball.friction;
+
+    if (ball.y - ball.radius < 0) { ball.y = ball.radius; ball.vy *= -1; }
+    if (ball.y + ball.radius > canvas.height) { ball.y = canvas.height - ball.radius; ball.vy *= -1; }
+
+    if (ball.x - ball.radius < goalWidth) {
+        if (ball.y > goalY && ball.y < goalY + goalHeight) {
+            score2++;
+            document.getElementById('score2').innerText = score2;
+            triggerGoalEffect("P2 (BLUE)");
+        } else {
+            ball.x = goalWidth + ball.radius;
+            ball.vx *= -1;
+        }
+    }
+
+    if (ball.x + ball.radius > canvas.width - goalWidth) {
+        if (ball.y > goalY && ball.y < goalY + goalHeight) {
+            score1++;
+            document.getElementById('score1').innerText = score1;
+            triggerGoalEffect("P1 (RED)");
+        } else {
+            ball.x = canvas.width - goalWidth - ball.radius;
+            ball.vx *= -1;
+        }
+    }
+
+    handleCircleCollision(p1, ball);
+    handleCircleCollision(p2, ball);
+    handleCircleCollision(gk1, ball, 11);
+    handleCircleCollision(gk2, ball, 11);
+    handleObstacleBallCollision(obstacle, ball);
+    handleObstaclePlayerCollision(obstacle, p1);
+    handleObstaclePlayerCollision(obstacle, p2);
+}
+
+function updateGoalkeeper(gk, minY, maxY) {
+    gk.y += gk.vy;
+    if (gk.y - gk.radius < minY || gk.y + gk.radius > maxY) {
+        gk.vy *= -1;
+    }
+}
+
+function clampPlayer(p) {
+    const minX = goalWidth + p.radius;
+    const maxX = canvas.width - goalWidth - p.radius;
+    const minY = p.radius;
+    const maxY = canvas.height - p.radius;
+
+    if (p.x < minX) p.x = minX;
+    if (p.x > maxX) p.x = maxX;
+    if (p.y < minY) p.y = minY;
+    if (p.y > maxY) p.y = maxY;
+}
+
+function handleCircleCollision(player, ball, customPower = 10) {
+    const dx = ball.x - player.x;
+    const dy = ball.y - player.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < player.radius + ball.radius) {
+        const angle = Math.atan2(dy, dx);
+        
+        ball.vx = Math.cos(angle) * customPower;
+        ball.vy = Math.sin(angle) * customPower;
+
+        const overlap = (player.radius + ball.radius) - distance + 1;
+        ball.x += Math.cos(angle) * overlap;
+        ball.y += Math.sin(angle) * overlap;
+    }
+}
+
+function handleObstacleBallCollision(obs, ball) {
+    const dx = ball.x - obs.x;
+    const dy = ball.y - obs.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < obs.radius + ball.radius) {
+        const angle = Math.atan2(dy, dx);
+        ball.vx = Math.cos(angle) * 12;
+        ball.vy = Math.sin(angle) * 12;
+        const overlap = (obs.radius + ball.radius) - distance + 1;
+        ball.x += Math.cos(angle) * overlap;
+        ball.y += Math.sin(angle) * overlap;
+    }
+}
+
+function handleObstaclePlayerCollision(obs, player) {
+    const dx = player.x - obs.x;
+    const dy = player.y - obs.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < obs.radius + player.radius) {
+        const angle = Math.atan2(dy, dx);
+        const overlap = (obs.radius + player.radius) - distance + 1;
+        player.x += Math.cos(angle) * overlap;
+        player.y += Math.sin(angle) * overlap;
+    }
+}
+
+function drawCheerleader(x, y, mainColor) {
+    ctx.save();
+    const danceOffset = Math.sin(animFrame * 0.15 + x) * 5;
+    const pomOffset = Math.cos(animFrame * 0.2 + x) * 7;
+
+    ctx.beginPath();
+    ctx.arc(x, y + danceOffset, 8, 0, Math.PI * 2);
+    ctx.fillStyle = "#FFD1DC";
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(x, y + 10 + danceOffset, 10, 0, Math.PI * 2);
+    ctx.fillStyle = mainColor;
+    ctx.fill();
+
+    ctx.fillStyle = "#FFD700";
+    ctx.beginPath();
+    ctx.arc(x - 12, y + 8 + danceOffset + pomOffset, 6, 0, Math.PI * 2);
+    ctx.arc(x + 12, y + 8 + danceOffset - pomOffset, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
+function drawGoal(x, y, width, height) {
+    ctx.fillStyle = "rgba(255, 255, 255, 0.15)";
+    ctx.fillRect(x, y, width, height);
+
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
+    ctx.lineWidth = 1;
+    for (let i = x; i <= x + width; i += 6) {
+        ctx.beginPath(); ctx.moveTo(i, y); ctx.lineTo(i, y + height); ctx.stroke();
+    }
+    for (let j = y; j <= y + height; j += 8) {
+        ctx.beginPath(); ctx.moveTo(x, j); ctx.lineTo(x + width, j); ctx.stroke();
+    }
+
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(x, y, width, height);
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const stripeWidth = 100;
+    for (let i = 0; i < canvas.width; i += stripeWidth) {
+        ctx.fillStyle = (i / stripeWidth) % 2 === 0 ? "#27ae60" : "#2ecc71";
+        ctx.fillRect(i, 0, stripeWidth, canvas.height);
+    }
+
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.7)";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(goalWidth, 0, canvas.width - (goalWidth * 2), canvas.height);
+
+    ctx.beginPath();
+    ctx.moveTo(canvas.width / 2, 0);
+    ctx.lineTo(canvas.width / 2, canvas.height);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(canvas.width / 2, canvas.height / 2, 85, 0, Math.PI * 2);
+    ctx.stroke();
+
+    cheerleadersP1.forEach(c => drawCheerleader(c.x, c.y, '#FF4B4B'));
+    cheerleadersP2.forEach(c => drawCheerleader(c.x, c.y, '#1E90FF'));
+
+    drawGoal(0, goalY, goalWidth, goalHeight);
+    drawGoal(canvas.width - goalWidth, goalY, goalWidth, goalHeight);
+
+    ctx.fillStyle = gk1.color;
+    ctx.beginPath(); ctx.arc(gk1.x, gk1.y, gk1.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#FFF"; ctx.lineWidth = 2; ctx.stroke();
+
+    ctx.fillStyle = gk2.color;
+    ctx.beginPath(); ctx.arc(gk2.x, gk2.y, gk2.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#FFF"; ctx.lineWidth = 2; ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(obstacle.x, obstacle.y, obstacle.radius, 0, Math.PI * 2);
+    ctx.fillStyle = obstacle.color;
+    ctx.fill();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(p1.x, p1.y, p1.radius, 0, Math.PI * 2);
+    ctx.fillStyle = p1.color;
+    ctx.fill();
+    ctx.strokeStyle = p1.isDashing ? "#FFD700" : "#ffffff";
+    ctx.lineWidth = p1.isDashing ? 6 : 3;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(p2.x, p2.y, p2.radius, 0, Math.PI * 2);
+    ctx.fillStyle = p2.color;
+    ctx.fill();
+    ctx.strokeStyle = p2.isDashing ? "#FFD700" : "#ffffff";
+    ctx.lineWidth = p2.isDashing ? 6 : 3;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+    ctx.fillStyle = ball.color;
+    ctx.fill();
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    if (goalTextTimer > 0) {
+        ctx.save();
+        
+        ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const scale = 1 + Math.sin(animFrame * 0.1) * 0.08;
+        const fontSize = Math.floor(75 * scale);
+        
+        ctx.font = "900 " + fontSize + "px 'Arial Black', sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        ctx.shadowColor = lastScorer.includes("P1") ? "#FF4B4B" : "#1E90FF";
+        ctx.shadowBlur = 25;
+        
+        ctx.fillStyle = "#FFD700";
+        ctx.fillText("⚽ GOAL! ⚽", canvas.width / 2, canvas.height / 2 - 30);
+        
+        ctx.font = "bold 32px sans-serif";
+        ctx.fillStyle = "#FFFFFF";
+        ctx.shadowBlur = 10;
+        ctx.fillText(lastScorer + " 득점 성공!", canvas.width / 2, canvas.height / 2 + 45);
+
+        ctx.restore();
+        goalTextTimer--;
+    }
+
+    if (gameOver) {
+        ctx.save();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.font = "bold 60px sans-serif";
+        ctx.fillStyle = "#FFD700";
+        ctx.textAlign = "center";
+        ctx.shadowColor = "black";
+        ctx.shadowBlur = 15;
+        ctx.fillText(winnerText, canvas.width / 2, canvas.height / 2 - 40);
+        ctx.restore();
+    }
+}
+
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+startTimer();
+gameLoop();
+</script>
+</body>
+</html>
